@@ -65,6 +65,7 @@ jobs:
         run: |
           mkdir -p dist/ext
           cp source/maintained.list dist/ext/maintained.list
+          cp source/github_surge.list dist/ext/github_surge.list
           cp source/bili_sgmodule dist/ext/bili.quanx
 
       - name: Publish rel branch
