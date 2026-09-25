@@ -1,4 +1,4 @@
-# rules
+> # rules
 
 An automated rule-generation repository for proxy and network tools. The project fetches `domain-list-community` and `GFWList`, parses the upstream data, and generates unified outputs for Surge, Clash, Quantumult X, sing-box, and V2Ray GeoSite.
 
