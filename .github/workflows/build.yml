@@ -59,7 +59,7 @@ jobs:
             exit 1
           }
           sing-box version
-          uv run generate
+          uv run python "${GITHUB_WORKSPACE}/main.py"
 
       - name: Add maintained rules
         run: |
