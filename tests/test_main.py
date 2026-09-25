@@ -1,7 +1,6 @@
 import os
 import tempfile
 import unittest
-from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,8 +37,8 @@ class ParseDLCTests(unittest.TestCase):
             with (
                 self.subTest(tags=tags),
                 patch(
-                    "main.urlopen",
-                    return_value=BytesIO(yaml.safe_dump(source).encode()),
+                    "main.fetch_url_bytes",
+                    return_value=yaml.safe_dump(source).encode(),
                 ),
             ):
                 rules = parse_dlc_plain("fixture", tags)
@@ -87,7 +86,7 @@ class ParseDLCTests(unittest.TestCase):
             ]
         }
         with patch(
-            "main.urlopen", return_value=BytesIO(yaml.safe_dump(source).encode())
+            "main.fetch_url_bytes", return_value=yaml.safe_dump(source).encode()
         ):
             rules = parse_dlc_plain("fixture", ("geolocation-cn", "geolocation-!cn"))
         self.assertEqual(
@@ -104,7 +103,7 @@ class ParseDLCTests(unittest.TestCase):
     def test_missing_cn_list_is_still_an_error(self):
         source = b'lists:\n- name: apple\n  rules: ["full:example.com:@cn"]\n'
         with (
-            patch("main.urlopen", return_value=BytesIO(source)),
+            patch("main.fetch_url_bytes", return_value=source),
             self.assertRaisesRegex(ValueError, "Missing DLC tags: geolocation-cn"),
         ):
             parse_dlc_plain("fixture", ("geolocation-cn",))

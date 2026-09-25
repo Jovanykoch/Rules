@@ -1,2 +1,4 @@
-# Maintained rules can be added to this file.
-# This placeholder keeps the source directory available for the build workflow.
+# Extra maintained domains.
+# One domain per line:
+# example.com
+# .example.org

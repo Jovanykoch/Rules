@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 from urllib.request import urlopen
@@ -83,13 +84,45 @@ GEOSITE_TAGS = (
 )
 
 GFWLIST_TAGS = ("gfw", "gfw-skip")
+DOWNLOAD_TIMEOUT_SECONDS = 20
+DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024
+DOWNLOAD_RETRIES = 3
+DOWNLOAD_RETRY_DELAY_SECONDS = 1.0
+
+
+def fetch_url_bytes(url: str, *, timeout: int = DOWNLOAD_TIMEOUT_SECONDS) -> bytes:
+    """Download bytes with retries and size guards."""
+    last_error: Exception | None = None
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            with urlopen(url, timeout=timeout) as response:
+                status = getattr(response, "status", None)
+                if status is not None and status >= 400:
+                    raise ValueError(f"HTTP {status} for {url}")
+                content = response.read(DOWNLOAD_MAX_BYTES + 1)
+            if not content:
+                raise ValueError(f"Empty response from {url}")
+            if len(content) > DOWNLOAD_MAX_BYTES:
+                raise ValueError(
+                    f"Response from {url} exceeds {DOWNLOAD_MAX_BYTES} bytes"
+                )
+            return content
+        except Exception as error:
+            last_error = error
+            if attempt == DOWNLOAD_RETRIES:
+                break
+            log.warning(
+                "Download failed (%d/%d): %s", attempt, DOWNLOAD_RETRIES, error
+            )
+            time.sleep(DOWNLOAD_RETRY_DELAY_SECONDS)
+    raise RuntimeError(f"Failed to download {url}") from last_error
 
 
 def parse_dlc_plain(url: str, tags: tuple[str, ...]) -> GeoSiteRules:
     """Extract flattened tags and supplement them with matching global attributes."""
     log.info("Downloading %s", url)
-    with urlopen(url) as response:
-        lists = yaml.safe_load(response).get("lists", [])
+    loaded = yaml.safe_load(fetch_url_bytes(url)) or {}
+    lists = loaded.get("lists", [])
 
     remaining = set(tags)
     result: GeoSiteRules = {}
@@ -228,8 +261,7 @@ def parse_gfwlist_text(content: bytes) -> GeoSiteRules:
 def parse_gfwlist(url: str) -> GeoSiteRules:
     """Download and parse the official plaintext GFWList."""
     log.info("Downloading %s", url)
-    with urlopen(url) as response:
-        return parse_gfwlist_text(response.read())
+    return parse_gfwlist_text(fetch_url_bytes(url))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -337,6 +369,80 @@ def release_singbox_file(
         ["sing-box", "rule-set", "compile", "--output", output, filename],
         check=True,
     )
+
+
+def validate_surge_file(path: str) -> None:
+    domain_line = re.compile(r"^\.?[A-Za-z0-9.-]+$")
+    with open(path) as f:
+        for index, raw_line in enumerate(f, start=1):
+            line = raw_line.strip()
+            if not line:
+                raise ValueError(f"{path}:{index} must not be empty")
+            if not domain_line.fullmatch(line):
+                raise ValueError(f"{path}:{index} invalid Surge domain line: {line}")
+
+
+def validate_clash_yaml(path: str) -> None:
+    with open(path) as f:
+        data = yaml.safe_load(f)
+    payload = data.get("payload") if isinstance(data, dict) else None
+    if not isinstance(payload, list) or not payload:
+        raise ValueError(f"{path} payload must be a non-empty list")
+    if not all(isinstance(item, str) and item for item in payload):
+        raise ValueError(f"{path} payload must contain non-empty strings")
+
+
+def validate_quanx_file(path: str) -> None:
+    line_pattern = re.compile(
+        r"^(host|host-suffix|host-keyword),\s*[^,\s]+,\s*(direct|proxy)$"
+    )
+    with open(path) as f:
+        for index, raw_line in enumerate(f, start=1):
+            line = raw_line.strip()
+            if not line:
+                raise ValueError(f"{path}:{index} must not be empty")
+            if not line_pattern.fullmatch(line):
+                raise ValueError(f"{path}:{index} invalid QuanX line: {line}")
+
+
+def validate_singbox_json(path: str) -> None:
+    with open(path) as f:
+        data = json.load(f)
+    if data.get("version") != 2:
+        raise ValueError(f"{path} must use sing-box rule-set version 2")
+    rules = data.get("rules")
+    if not isinstance(rules, list) or not rules:
+        raise ValueError(f"{path} must include at least one rule object")
+
+
+def validate_binary_geosite(path: str) -> None:
+    with open(path, "rb") as f:
+        content = f.read()
+    if not content:
+        raise ValueError(f"{path} must be non-empty")
+    if content[0] != 0x0A:
+        raise ValueError(f"{path} does not look like a GeoSite protobuf payload")
+
+
+def validate_non_empty_file(path: str) -> None:
+    if os.path.getsize(path) <= 0:
+        raise ValueError(f"{path} must be non-empty")
+
+
+def validate_outputs(tags: tuple[str, ...]) -> None:
+    for tag in tags:
+        validate_surge_file(f"dist/{tag}.list")
+        validate_clash_yaml(f"dist/{tag}.yaml")
+        validate_quanx_file(f"dist/{tag}.quanx")
+        validate_singbox_json(f"tmp/{tag}.json")
+        validate_non_empty_file(f"dist/{tag}.srs")
+    for geosite_path in (
+        "dist/geosite.dat",
+        "dist/geosite-cn.dat",
+        "dist/geosite-gfw.dat",
+    ):
+        validate_binary_geosite(geosite_path)
+    log.info("Validated generated outputs")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -486,6 +592,7 @@ def _run() -> None:
         )
 
     release_geosite_files(geosite_rules, gfwlist_rules)
+    validate_outputs((*GEOSITE_TAGS, *GFWLIST_TAGS))
 
 
 if __name__ == "__main__":
