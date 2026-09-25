@@ -3,11 +3,13 @@
 #!system=ios
 
 [Rule]
+# CDN / media delivery
 DOMAIN,upos-sz-mirror14b.bilivideo.com,REJECT,pre-matching
 DOMAIN-SUFFIX,mcdn.bilivideo.com,REJECT,pre-matching
 DOMAIN-SUFFIX,mcdn.bilivideo.cn,REJECT,pre-matching
 DOMAIN-SUFFIX,mcdn.bilivideo.net,REJECT,pre-matching
 DOMAIN-SUFFIX,nexusedgeio.com,REJECT,pre-matching
+# Ad and tracking domains
 DOMAIN-SUFFIX,ahdohpiechei.com,REJECT,pre-matching
 DOMAIN-SUFFIX,szbdyd.com,REJECT,pre-matching
 DOMAIN-KEYWORD,302ppio,REJECT,pre-matching
