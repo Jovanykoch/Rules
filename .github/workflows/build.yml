@@ -21,7 +21,7 @@ jobs:
     permissions:
       contents: write
     env:
-      SING_BOX_VERSION: "1.12.8"
+      SING_BOX_VERSION: "1.14.2"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -38,11 +38,16 @@ jobs:
             arm64) sb_arch="arm64" ;;
             *) echo "::error::Unsupported architecture: ${arch}" && exit 1 ;;
           esac
-          pkg="sing-box-${SING_BOX_VERSION}-linux-${sb_arch}.deb"
+          pkg="sing-box_${SING_BOX_VERSION}_linux_${sb_arch}.deb"
           url="https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VERSION}/${pkg}"
-          curl -fsSL -o "${pkg}" "${url}"
+          echo "Downloading ${url}"
+          curl --fail --location --show-error --silent --retry 3 --retry-delay 2 \
+            --output "${pkg}" "${url}"
           sudo dpkg -i "${pkg}"
           rm -f "${pkg}"
+
+      - name: Run tests
+        run: uv run python -m unittest discover -s tests -v
 
       - name: Generate rules
         working-directory: ${{ github.workspace }}
@@ -54,10 +59,7 @@ jobs:
             exit 1
           }
           sing-box version
-          uv run python "${GITHUB_WORKSPACE}/main.py"
-
-      - name: Run tests
-        run: uv run python -m unittest discover -s tests
+          uv run generate
 
       - name: Add maintained rules
         run: |
