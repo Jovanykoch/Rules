@@ -29,9 +29,16 @@ jobs:
         run: bash <(curl -fsSL https://sing-box.app/deb-install.sh)
 
       - name: Generate rules
+        working-directory: ${{ github.workspace }}
         run: |
+          test -f "${GITHUB_WORKSPACE}/main.py" || {
+            echo "::error::main.py is missing from ${GITHUB_WORKSPACE}"
+            pwd
+            ls -la
+            exit 1
+          }
           sing-box version
-          uv run python main.py
+          uv run python "${GITHUB_WORKSPACE}/main.py"
 
       - name: Add maintained rules
         run: |
