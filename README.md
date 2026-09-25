@@ -1,6 +1,6 @@
-# Rules
+# rules
 
-A collection of custom rules for network and proxy tools.
+> A collection of custom rules for network and proxy tools.
 
 ## Contents
 
