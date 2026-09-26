@@ -83,9 +83,18 @@ GEOSITE_TAGS = (
     "reject",
     "loc-!cn",
     "loc-cn",
+    "ai",
+    "streaming-cn",
 )
 
 GFWLIST_TAGS = ("gfw", "gfw-skip")
+
+# Tags built from hand-maintained local sources instead of upstream data.
+# Format follows source/maintained.list: one domain per line,
+# a leading dot marks a domain suffix, '#' starts a comment.
+LOCAL_TAG_SOURCES = {
+    "streaming-cn": "source/streaming-cn.list",
+}
 DOWNLOAD_TIMEOUT_SECONDS = 20
 DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024
 DOWNLOAD_RETRIES = 3
@@ -301,6 +310,27 @@ def parse_gfwlist(url: str) -> GeoSiteRules:
     """Download and parse the official plaintext GFWList."""
     log.info("Downloading %s", url)
     return parse_gfwlist_text(fetch_url_bytes(url))
+
+
+def parse_local_domain_list(path: str) -> tuple[list[str], list[str]]:
+    """Parse a hand-maintained domain list (see source/maintained.list).
+
+    One domain per line; a leading dot marks a domain suffix;
+    lines starting with '#' and blank lines are ignored.
+    Returns (exact_domains, domain_suffixes) deduplicated in file order.
+    """
+    domain: list[str] = []
+    domain_suffix: list[str] = []
+    with open(path, encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("."):
+                domain_suffix.append(line[1:])
+            else:
+                domain.append(line)
+    return list(dict.fromkeys(domain)), list(dict.fromkeys(domain_suffix))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -680,6 +710,7 @@ def _run() -> None:
         ("category-ads-all", "reject", (), BLOCK_DOMAIN_SUFFIX),
         ("geolocation-!cn", "loc-!cn", (), ()),
         ("geolocation-cn", "loc-cn", DIRECT_DOMAIN, DIRECT_DOMAIN_SUFFIX),
+        ("category-ai-!cn", "ai", (), ()),
     )
     upstream_rules = parse_dlc_plain(
         "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat_plain.yml",
@@ -695,6 +726,12 @@ def _run() -> None:
         domain_suffix.extend(extra_suffixes)
         geosite_rules[output_tag] = release(
             domain, domain_suffix, domain_keyword, domain_regex, output_tag
+        )
+
+    for output_tag, source_path in LOCAL_TAG_SOURCES.items():
+        domain, domain_suffix = parse_local_domain_list(source_path)
+        geosite_rules[output_tag] = release(
+            domain, domain_suffix, [], [], output_tag
         )
 
     gfwlist_rules = parse_gfwlist(

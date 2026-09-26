@@ -1,0 +1,82 @@
+# 国内流媒体 / 音视频服务域名（回国场景用）。
+#
+# 构建时发布为 dist/streaming-cn.list 等全格式规则集，
+# Surge 订阅示例：
+#   DOMAIN-SET,https://github.com/Jovanykoch/rules/releases/latest/download/streaming-cn.list
+#
+# 格式：每行一个域名，行首 '.' 表示后缀匹配，否则为精确匹配。
+# 以 '#' 开头的行是注释。
+
+# ── 抖音系 ──
+.douyin.com
+.douyincdn.com
+.snssdk.com
+.amemv.com
+# 西瓜视频
+.ixigua.com
+# 今日头条
+.toutiao.com
+
+# ── 网易云音乐 ──
+.music.163.com
+.music.126.net
+
+# ── 哔哩哔哩 ──
+.bilibili.com
+.hdslb.com
+.biliapi.com
+
+# ── 爱奇艺 ──
+.iqiyi.com
+.qiyi.com
+
+# ── 腾讯视频 / QQ 音乐 ──
+.v.qq.com
+.video.qq.com
+.y.qq.com
+
+# ── 优酷 ──
+.youku.com
+
+# ── 快手 ──
+.kuaishou.com
+.kwai.com
+
+# ── 小红书 ──
+.xiaohongshu.com
+
+# ── 虎牙直播 ──
+.huya.com
+
+# ── 斗鱼直播 ──
+.douyu.com
+.douyucdn.cn
+
+# ── 芒果 TV ──
+.mgtv.com
+
+# ── 搜狐视频 ──
+.tv.sohu.com
+
+# ── 咪咕视频 / 咪咕音乐 ──
+.migu.cn
+
+# ── 喜马拉雅 ──
+.ximalaya.com
+
+# ── 蜻蜓 FM ──
+.qingting.fm
+
+# ── 酷狗音乐 ──
+.kugou.com
+
+# ── 酷我音乐 ──
+.kuwo.cn
+
+# ── 央视 / 央视频 ──
+.cctv.com
+.cntv.cn
+.yangshipin.cn
+
+# ── PPTV ──
+.pptv.com

@@ -38,6 +38,8 @@ uv run python -m unittest discover -s tests
 - `loc-!cn`：中国大陆以外地区的规则
 - `gfw`：来自 GFWList 的代理规则
 - `gfw-skip`：来自 GFWList 的直连白名单规则
+- `ai`：中国大陆以外的 AI 服务域名（OpenAI、Anthropic、Gemini 等）
+- `streaming-cn`：中国大陆流媒体/音视频服务域名（手工维护，回国场景用）
 
 ## `rel` 分支的产物
 

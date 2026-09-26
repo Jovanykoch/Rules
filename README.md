@@ -38,6 +38,8 @@ uv run python -m unittest discover -s tests
 - `loc-!cn`: Rules for destinations outside mainland China
 - `gfw`: Proxy rules from GFWList
 - `gfw-skip`: Direct-connection allowlist rules from GFWList
+- `ai`: Non-mainland-China AI service domains (OpenAI, Anthropic, Gemini, …)
+- `streaming-cn`: Mainland-China streaming/media service domains (hand-maintained, for back-to-China routing)
 
 ## Artifacts in the `rel` Branch
 
