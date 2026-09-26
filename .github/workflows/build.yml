@@ -73,6 +73,24 @@ jobs:
           cp source/bili.sgmodule dist/ext/bili.sgmodule
           cp source/bili.quanx dist/ext/bili.quanx
 
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - name: Build chnroutes.mmdb
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text/cn.txt -o /tmp/cn.txt
+          test -s /tmp/cn.txt
+          echo "CIDR lines: $(wc -l < /tmp/cn.txt)"
+          cd tools/mmdb
+          go mod tidy
+          go build -o /tmp/mmdb-build .
+          /tmp/mmdb-build /tmp/cn.txt "${GITHUB_WORKSPACE}/dist/chnroutes.mmdb"
+          test -s "${GITHUB_WORKSPACE}/dist/chnroutes.mmdb"
+          ls -lh "${GITHUB_WORKSPACE}/dist/chnroutes.mmdb"
+
       - name: Publish rel branch
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
