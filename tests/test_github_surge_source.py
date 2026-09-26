@@ -13,6 +13,14 @@ class GitHubSurgeSourceTests(unittest.TestCase):
             workflow,
         )
 
+    def test_build_workflow_publishes_ext_files_with_matching_names(self):
+        # Source files under source/ must be published to dist/ext/ under
+        # their own basename: a Surge module must not be published as .quanx.
+        workflow = (REPO_ROOT / ".github/workflows/build.yml").read_text()
+        for name in ("maintained.list", "github_surge.list", "bili.sgmodule", "bili.quanx"):
+            self.assertIn(f"cp source/{name} dist/ext/{name}", workflow)
+            self.assertTrue((REPO_ROOT / "source" / name).exists())
+
     def test_github_surge_source_format(self):
         source_file = REPO_ROOT / "source/github_surge.list"
         lines = source_file.read_text().splitlines()

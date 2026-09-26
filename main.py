@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import logging
 import os
@@ -6,8 +7,9 @@ import shutil
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from urllib.parse import urlsplit
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import yaml
 
@@ -88,14 +90,19 @@ DOWNLOAD_TIMEOUT_SECONDS = 20
 DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024
 DOWNLOAD_RETRIES = 3
 DOWNLOAD_RETRY_DELAY_SECONDS = 1.0
+USER_AGENT = (
+    "Mozilla/5.0 (compatible; Jovanykoch-rules/1.0; "
+    "+https://github.com/Jovanykoch/rules)"
+)
 
 
 def fetch_url_bytes(url: str, *, timeout: int = DOWNLOAD_TIMEOUT_SECONDS) -> bytes:
     """Download bytes with retries and size guards."""
     last_error: Exception | None = None
+    request = Request(url, headers={"User-Agent": USER_AGENT})
     for attempt in range(1, DOWNLOAD_RETRIES + 1):
         try:
-            with urlopen(url, timeout=timeout) as response:
+            with urlopen(request, timeout=timeout) as response:
                 status = getattr(response, "status", None)
                 if status is not None and status >= 400:
                     raise ValueError(f"HTTP {status} for {url}")
@@ -198,6 +205,32 @@ def _append_gfwlist_host(
     (domain_suffix if suffix else domain).append(host)
 
 
+def _regex_targets_url_path(pattern: str) -> bool:
+    """Detect a literal slash outside character classes (i.e. a URL path).
+
+    Slashes inside ``[...]`` classes (e.g. the ``[^\\/]`` "not a slash" idiom)
+    are fine for domain matching; a slash anywhere else means the pattern was
+    written against full URLs and can never match a bare domain.
+    """
+    in_class = False
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "\\" and index + 1 < len(pattern):
+            if pattern[index + 1] == "/" and not in_class:
+                return True
+            index += 2
+            continue
+        if char == "[":
+            in_class = True
+        elif char == "]":
+            in_class = False
+        elif char == "/" and not in_class:
+            return True
+        index += 1
+    return False
+
+
 def _append_gfwlist_rule(rule: str, values: DomainResult) -> None:
     domain, domain_suffix, _, domain_regex = values
     if rule.startswith("/"):
@@ -209,6 +242,12 @@ def _append_gfwlist_rule(rule: str, values: DomainResult) -> None:
         if lookahead:
             alternatives, character_class, tail = lookahead.groups()
             pattern = f"^{character_class}*(?:{alternatives}){character_class}*{tail}"
+        if _regex_targets_url_path(pattern):
+            log.warning(
+                "Dropping GFWList regex that matches URL paths, not domains: %r",
+                rule,
+            )
+            return
         domain_regex.append(pattern)
         return
     if rule.startswith("||"):
@@ -269,6 +308,26 @@ def parse_gfwlist(url: str) -> GeoSiteRules:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def extract_ip_cidrs(values: list[str]) -> tuple[list[str], list[str]]:
+    """Split IP literals out of a domain list.
+
+    Returns ``(domains, cidrs)`` where IP literals are converted to CIDR
+    notation (``/32`` for IPv4, ``/128`` for IPv6). Domain-only outputs
+    (Surge DOMAIN-SET, GeoSite) cannot express IP rules, so callers route the
+    CIDRs to formats with native IP support instead of emitting dead rules.
+    """
+    domains: list[str] = []
+    cidrs: list[str] = []
+    for value in values:
+        try:
+            ip = ipaddress.ip_address(value)
+        except ValueError:
+            domains.append(value)
+        else:
+            cidrs.append(f"{ip}/{32 if ip.version == 4 else 128}")
+    return domains, cidrs
+
+
 def release(
     domain: list[str],
     domain_suffix: list[str],
@@ -280,7 +339,18 @@ def release(
 ) -> DomainResult:
     """Generate output files (Surge, Clash, QuanX, sing-box) for *tag*."""
     log.info("Releasing tag: %s", tag)
+    domain, domain_ips = extract_ip_cidrs(domain)
+    domain_suffix, suffix_ips = extract_ip_cidrs(domain_suffix)
+    ip_cidr = list(dict.fromkeys([*domain_ips, *suffix_ips]))
+    if ip_cidr:
+        log.info(
+            "Tag %s: moved %d IP literal(s) to ip_cidr rules",
+            tag,
+            len(ip_cidr),
+        )
     domain, domain_suffix = clean_domains(domain, domain_suffix)
+    domain_keyword = list(dict.fromkeys(domain_keyword))
+    domain_regex = list(dict.fromkeys(domain_regex))
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = [
@@ -293,6 +363,7 @@ def release(
                 domain_suffix,
                 domain_keyword,
                 quanx_policy,
+                ip_cidr,
             ),
             pool.submit(
                 release_singbox_file,
@@ -301,26 +372,44 @@ def release(
                 domain_suffix,
                 domain_regex,
                 domain_keyword,
+                ip_cidr,
             ),
         ]
         for future in futures:
             future.result()
+
+    if ip_cidr:
+        # Clash rule-providers require `behavior` to match the payload:
+        # IP rules get their own `ipcidr`-behavior file.
+        release_clash_ipcidr_file(tag, ip_cidr)
 
     return domain, domain_suffix, domain_keyword, domain_regex
 
 
 def release_surge_file(tag: str, domain: list[str], domain_suffix: list[str]) -> None:
     filename = f"dist/{tag}.list"
-    with open(filename, "w") as f:
+    with open(filename, "w", encoding="utf-8") as f:
         f.writelines(s + "\n" for s in domain)
         f.writelines("." + s + "\n" for s in domain_suffix)
 
 
 def release_clash_file(tag: str, domain: list[str], domain_suffix: list[str]) -> None:
     filename = f"dist/{tag}.yaml"
-    with open(filename, "w") as f:
+    with open(filename, "w", encoding="utf-8") as f:
         yaml.dump(
             {"payload": domain + ["." + s for s in domain_suffix]},
+            f,
+            default_flow_style=False,
+            allow_unicode=True,
+        )
+
+
+def release_clash_ipcidr_file(tag: str, ip_cidr: list[str]) -> None:
+    """Write a Clash `behavior: ipcidr` rule-provider file."""
+    filename = f"dist/{tag}-ipcidr.yaml"
+    with open(filename, "w", encoding="utf-8") as f:
+        yaml.dump(
+            {"payload": list(ip_cidr)},
             f,
             default_flow_style=False,
             allow_unicode=True,
@@ -333,12 +422,14 @@ def release_quanx_file(
     domain_suffix: list[str],
     domain_keyword: list[str],
     policy: str = "direct",
+    ip_cidr: list[str] = (),
 ) -> None:
     filename = f"dist/{tag}.quanx"
-    with open(filename, "w", buffering=65536) as f:
+    with open(filename, "w", encoding="utf-8", buffering=65536) as f:
         f.writelines(f"host, {s}, {policy}\n" for s in domain)
         f.writelines(f"host-suffix, {s}, {policy}\n" for s in domain_suffix)
         f.writelines(f"host-keyword, {s}, {policy}\n" for s in domain_keyword)
+        f.writelines(f"ip-cidr, {c}, {policy}\n" for c in ip_cidr)
 
 
 def release_singbox_file(
@@ -347,6 +438,7 @@ def release_singbox_file(
     domain_suffix: list[str],
     domain_regex: list[str],
     domain_keyword: list[str],
+    ip_cidr: list[str] = (),
 ) -> None:
     filename = f"tmp/{tag}.json"
     rule = {
@@ -356,11 +448,12 @@ def release_singbox_file(
             ("domain_suffix", domain_suffix),
             ("domain_regex", domain_regex),
             ("domain_keyword", domain_keyword),
+            ("ip_cidr", list(ip_cidr)),
         )
         if values
     }
 
-    with open(filename, "w") as f:
+    with open(filename, "w", encoding="utf-8") as f:
         json.dump({"version": 2, "rules": [rule]}, f, separators=(",", ":"))
 
     output = f"dist/{tag}.srs"
@@ -368,22 +461,32 @@ def release_singbox_file(
     subprocess.run(
         ["sing-box", "rule-set", "compile", "--output", output, filename],
         check=True,
+        timeout=300,
     )
 
 
 def validate_surge_file(path: str) -> None:
     domain_line = re.compile(r"^\.?[A-Za-z0-9.-]+$")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for index, raw_line in enumerate(f, start=1):
             line = raw_line.strip()
             if not line:
                 raise ValueError(f"{path}:{index} must not be empty")
             if not domain_line.fullmatch(line):
                 raise ValueError(f"{path}:{index} invalid Surge domain line: {line}")
+            try:
+                ipaddress.ip_address(line.lstrip("."))
+            except ValueError:
+                pass
+            else:
+                raise ValueError(
+                    f"{path}:{index} IP literal does not belong in a Surge "
+                    f"DOMAIN-SET file: {line}"
+                )
 
 
 def validate_clash_yaml(path: str) -> None:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     payload = data.get("payload") if isinstance(data, dict) else None
     if not isinstance(payload, list) or not payload:
@@ -394,9 +497,9 @@ def validate_clash_yaml(path: str) -> None:
 
 def validate_quanx_file(path: str) -> None:
     line_pattern = re.compile(
-        r"^(host|host-suffix|host-keyword),\s*[^,\s]+,\s*(direct|proxy)$"
+        r"^(host|host-suffix|host-keyword|ip-cidr),\s*[^,\s]+,\s*(direct|proxy)$"
     )
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for index, raw_line in enumerate(f, start=1):
             line = raw_line.strip()
             if not line:
@@ -406,7 +509,7 @@ def validate_quanx_file(path: str) -> None:
 
 
 def validate_singbox_json(path: str) -> None:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     if data.get("version") != 2:
         raise ValueError(f"{path} must use sing-box rule-set version 2")
@@ -436,6 +539,9 @@ def validate_outputs(tags: tuple[str, ...]) -> None:
         validate_quanx_file(f"dist/{tag}.quanx")
         validate_singbox_json(f"tmp/{tag}.json")
         validate_non_empty_file(f"dist/{tag}.srs")
+        ipcidr_path = f"dist/{tag}-ipcidr.yaml"
+        if os.path.exists(ipcidr_path):
+            validate_clash_yaml(ipcidr_path)
     for geosite_path in (
         "dist/geosite.dat",
         "dist/geosite-cn.dat",
@@ -530,16 +636,23 @@ def clean_domains(
 
     unique_suffixes = dict.fromkeys(domain_suffix)
 
-    def covered(value: str) -> bool:
-        while (dot := value.find(".")) >= 0:
-            value = value[dot + 1 :]
-            if value in unique_suffixes:
+    def covered(value: str, *, include_self: bool) -> bool:
+        if include_self and value in unique_suffixes:
+            return True
+        parent = value
+        while (dot := parent.find(".")) >= 0:
+            parent = parent[dot + 1 :]
+            if parent in unique_suffixes:
                 return True
         return False
 
     return (
-        [value for value in dict.fromkeys(domain) if not covered(value)],
-        [value for value in unique_suffixes if not covered(value)],
+        [value for value in dict.fromkeys(domain) if not covered(value, include_self=True)],
+        [
+            value
+            for value in unique_suffixes
+            if not covered(value, include_self=False)
+        ],
     )
 
 
@@ -549,6 +662,9 @@ def clean_domains(
 
 
 def main() -> None:
+    # Anchor all relative paths (dist/, tmp/) to the repository root so
+    # `uv run generate` works no matter where it is invoked from.
+    os.chdir(Path(__file__).resolve().parent)
     shutil.rmtree("dist", ignore_errors=True)
     os.makedirs("dist")
     os.makedirs("tmp", exist_ok=True)

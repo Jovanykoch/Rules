@@ -142,6 +142,23 @@ plain.example
         with self.assertRaisesRegex(ValueError, "header"):
             parse_gfwlist_text(b"not a gfwlist")
 
+    def test_drops_regexes_targeting_url_paths(self) -> None:
+        source = (
+            "[AutoProxy 0.2.9]\n"
+            r"/^https?:\/\/example\.com\/ads\/banner/"
+            "\n"
+            r"/^https?:\/\/[^\/]+blogspot\.(.*)/"
+            "\n"
+        )
+        with self.assertLogs("main", level="WARNING") as logs:
+            rules = parse_gfwlist_text(source.encode())
+        _, _, _, domain_regex = rules["gfw"]
+        # The path-matching regex is dropped; the [^\/] idiom is kept.
+        self.assertEqual(domain_regex, [r"[^\/]+blogspot\.(.*)"])
+        self.assertTrue(
+            any("matches URL paths" in message for message in logs.output)
+        )
+
     def test_gfw_quanx_rules_use_proxy_policy(self) -> None:
         previous_cwd = Path.cwd()
         with tempfile.TemporaryDirectory() as directory:

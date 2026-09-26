@@ -1,0 +1,11 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Generated artifacts (published to the `rel` branch by CI)
+dist/
+tmp/
+
+# Virtual environments
+.venv/
